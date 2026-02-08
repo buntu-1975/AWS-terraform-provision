@@ -2,26 +2,19 @@ name: "Terraform Multi-Env CI/CD"
 
 on:
   push:
-    branches:
-      - main
-      - test
-      - dev
+    branches: [main, test, dev]
     paths:
-      - 'lessons/day27/code/**'
+      - "lessons/day27/code/**"
 
   pull_request:
-    branches:
-      - main
-      - test
-      - dev
+    branches: [main, test, dev]
     paths:
-      - 'lessons/day27/code/**'
+      - "lessons/day27/code/**"
 
 env:
   TF_LOG: INFO
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  # BUCKET_TF_STATE: ${{ secrets.BUCKET_TF_STATE}}
 
 permissions:
   contents: read
@@ -29,11 +22,15 @@ permissions:
   issues: write
 
 jobs:
+# =========================
+# TERRAFORM PLAN
+# =========================
   terraform-plan:
     name: "Terraform Plan"
     runs-on: ubuntu-latest
     outputs:
       tf_workspace: ${{ steps.env-vars.outputs.tf_workspace }}
+
     defaults:
       run:
         shell: bash
@@ -54,37 +51,30 @@ jobs:
           tflint_version: v0.52.0
 
       - name: Init TFLint
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: tflint --init
 
       - name: Run TFLint
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: tflint -f compact
 
-      - name: Run Trivy vulnerability scanner in IaC mode
+      - name: Run Trivy IaC Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: "config"
-          hide-progress: false
           format: "table"
           exit-code: "0"
           ignore-unfixed: true
           severity: "CRITICAL,HIGH"
 
       - name: Terraform Init
-        id: init
         run: terraform init
 
-      - name: Terraform Format
-        id: fmt
+      - name: Terraform Format Check
         run: terraform fmt -check
 
       - name: Terraform Validate
-        id: validate
         run: terraform validate
 
+# -------- Detect Environment --------
       - name: Set Environment Variables
         id: env-vars
         run: |
@@ -114,61 +104,46 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: terraform plan -var-file=$TF_VAR_FILE -no-color -input=false -out=tfplan
-        continue-on-error: true
+        run: terraform plan -var-file=$TF_VAR_FILE -no-color -input=false
 
-      - name: Update Pull Request
-        uses: actions/github-script@v6
+# -------- Comment Plan on PR --------
+      - name: Comment PR with Plan
         if: github.event_name == 'pull_request'
-        env:
-          PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
+        uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
-            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
-            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
-            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
-            #### Environment 🌍 \`${{ env.WORKSPACE_NAME }}\`
-
-            <details><summary>Show Plan</summary>
-
-            \`\`\`\n
-            ${process.env.PLAN}
-            \`\`\`
-
-            </details>
-
-            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
-
+            const output = `
+            #### Terraform Plan 📖
+            **Environment:** \`${{ env.WORKSPACE_NAME }}\`
+            **Result:** \`${{ steps.plan.outcome }}\`
+            `;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: output
-            })
+            });
 
-      - name: Terraform Plan Status
+      - name: Fail if Plan Failed
         if: steps.plan.outcome == 'failure'
         run: exit 1
 
-      - name: Upload Plan Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ env.WORKSPACE_NAME }}
-          path: ./lessons/day27/code/tfplan
 
+# =========================
+# TERRAFORM APPLY
+# =========================
   terraform-apply:
     name: "Terraform Apply"
     needs: terraform-plan
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: ${{ needs.terraform-plan.outputs.tf_workspace }}
+
     defaults:
       run:
         shell: bash
         working-directory: ./lessons/day27/code/
-        
 
     steps:
       - name: Checkout
@@ -182,8 +157,8 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
+# -------- Detect Environment --------
       - name: Set Environment Variables
-        id: env-vars
         run: |
           BRANCH_NAME="${{ github.ref_name }}"
           if [[ "$BRANCH_NAME" == "main" ]]; then
@@ -201,11 +176,8 @@ jobs:
         run: |
           terraform workspace select $WORKSPACE_NAME || terraform workspace new $WORKSPACE_NAME
 
-      - name: Download Plan Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ env.WORKSPACE_NAME }}
-          path: ./lessons/day27/code/
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false tfplan
+# -------- FIX: Fresh Plan + Apply --------
+      - name: Terraform Plan & Apply (fresh)
+        run: |
+          terraform plan -var-file=$TF_VAR_FILE -out=tfplan
+          terraform apply -auto-approve tfplan
