@@ -13,11 +13,11 @@ provider "aws" {
 }
 
 # Create a S3 bucket
-resource "aws_s3_bucket" "tf_test_bony-bucket-08-02-26" {
-  bucket = "my-tf-test-bucket-08-02-26"
+resource "aws_s3_bucket" "tf_test_bony1-bucket-08-02-26" {
+  bucket = "my-tf-test-bucket1-08-02-26"
 
   tags = {
-    Name        = "My bucket-08-02-2026"
+    Name        = "My bucket1-08-02-2026"
     Environment = "Dev"
   }
 }
