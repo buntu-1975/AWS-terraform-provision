@@ -17,7 +17,7 @@ resource "aws_s3_bucket" "tf_test_baivab_bucket" {
   bucket = "my-tf-test-baiv-bucket-101"
 
   tags = {
-    Name        = "My bucket"
+    Name        = "My bucket-08-02-2026"
     Environment = "Dev"
   }
 }
